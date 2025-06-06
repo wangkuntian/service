@@ -24,7 +24,7 @@ class ServiceManager(Manager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ws_client = None
-        self.url = 'ws://192.168.33.138:8765'
+        self.url = 'ws://192.168.1.11:8765'
         self.is_connected = False
         self.reconnect_delay = 5  # reconnect delay in seconds
         # connection lock, prevent simultaneous connection

@@ -40,7 +40,7 @@ async def handle_message(ws, message: str):
 
 
 async def main():
-    url = 'ws://192.168.33.138:8765'
+    url = 'ws://0.0.0.0:8765'
     while True:
         async with websockets.connect(
             url, ping_interval=10, ping_timeout=10

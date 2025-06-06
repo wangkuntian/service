@@ -10,6 +10,11 @@ format = (
     '<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | '
     '<level>{message}</level>'
 )
+
+# 移除默认处理器，避免重复日志
+logger.remove()
+
+# 添加自定义处理器
 logger.add(
     sys.stdout,
     level='INFO',

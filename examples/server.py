@@ -47,13 +47,13 @@ async def main():
     """
     main function, start WebSocket server
     """
-    LOG.info('WebSocket server started: ws://192.168.33.138:8765')
+    LOG.info('WebSocket server started: ws://192.168.1.11:8765')
     LOG.info('Press Ctrl+C to stop server')
 
     # start server
     async with websockets.serve(
         handle_client,
-        '192.168.33.138',
+        '192.168.1.11',
         8765,
         ping_interval=30,
         ping_timeout=10,
