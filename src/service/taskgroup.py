@@ -157,26 +157,24 @@ class TaskGroup:
         :param kwargs: Keyword arguments for the callback function
         :returns: AsyncTask object
         """
-        # 先创建 task_wrapper 变量
         task_wrapper = None
 
         async def _run_with_semaphore():
             async with self.semaphore:
                 try:
                     self._stats['tasks_created'] += 1
-
-                    # 处理超时包装
                     if timeout:
-                        actual_callback = lambda: asyncio.wait_for(
-                            callback(*args, **kwargs)
-                            if asyncio.iscoroutinefunction(callback)
-                            else callback(*args, **kwargs),
-                            timeout=timeout,
-                        )
+
+                        def actual_callback():
+                            return asyncio.wait_for(
+                                callback(*args, **kwargs)
+                                if asyncio.iscoroutinefunction(callback)
+                                else callback(*args, **kwargs),
+                                timeout=timeout,
+                            )
                     else:
                         actual_callback = callback
 
-                    # 执行任务
                     if asyncio.iscoroutinefunction(
                         actual_callback if not timeout else callback
                     ):
@@ -214,7 +212,8 @@ class TaskGroup:
                         self.tasks.discard(task_wrapper)
 
         task = asyncio.create_task(_run_with_semaphore())
-        task_wrapper = AsyncTask(task, f'Task-{callback.__name__}')
+        task_wrapper = AsyncTask(task)
+
         self.tasks.add(task_wrapper)
         return task_wrapper
 
@@ -244,7 +243,7 @@ class TaskGroup:
             except Exception:
                 LOG.exception('Error stopping task.')
 
-    def stop_timers(self, wait: bool = False):
+    async def stop_timers(self, wait: bool = False):
         """Stop all timers in the group and remove them from the group
 
         After stopping timers, no new calls will be triggered,
@@ -257,14 +256,12 @@ class TaskGroup:
         """
         timers_to_stop = self.timers.copy()
         for timer in timers_to_stop:
-            timer.stop()
+            await timer.stop()
 
         if wait:
-            # Return a coroutine function for the caller to await
-            return self._wait_for_timers_stop(timers_to_stop)
+            await self._wait_for_timers_stop(timers_to_stop)
 
         self.timers = []
-        return None
 
     async def _wait_for_timers_stop(
         self, timers: list[loopingcall.LoopingCallBase]
@@ -284,7 +281,7 @@ class TaskGroup:
         If True, wait for all timers to stop and all tasks to complete;
         otherwise, immediately cancel tasks and return
         """
-        self.stop_timers(wait=graceful)
+        await self.stop_timers(wait=graceful)
         if graceful:
             await self._wait_tasks()
         else:
@@ -378,26 +375,3 @@ class TaskGroup:
             'active_timers': len(self.timers),
             'semaphore_available': self.semaphore._value,
         }
-
-
-if __name__ == '__main__':
-
-    async def test():
-        tg = TaskGroup(max_concurrent_tasks=10)
-
-        # 测试添加异步任务
-        async def async_task():
-            await asyncio.sleep(1)
-            return '异步任务完成'
-
-        task = await tg.add_task(async_task)
-        print('任务添加后的统计:', tg.stats)
-
-        # 等待任务完成
-        result = await task.wait()
-        print('任务结果:', result)
-        print('任务完成后的统计:', tg.stats)
-
-        await tg.wait()
-
-    asyncio.run(test())

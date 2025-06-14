@@ -10,6 +10,9 @@ class Manager(PeriodicTasks):
     async def start(self):
         pass
 
+    async def stop(self):
+        pass
+
 
 class DaemonService(Service):
     def __init__(self, conf: ConfigOpts, manager: Manager, *args, **kwargs):
@@ -25,6 +28,8 @@ class DaemonService(Service):
             initial_delay=self.conf.initial_delay,
             periodic_interval_max=self.conf.periodic_interval_max,
         )
+        await self.manager.start()
 
     async def stop(self):
+        await self.manager.stop()
         await super().stop()

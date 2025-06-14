@@ -1,6 +1,8 @@
 import asyncio
 import os
 import signal
+import sys
+import threading
 import time
 
 from service import ServiceBase, systemd
@@ -33,8 +35,6 @@ class ServiceLauncher(Launcher):
         self._restart_event = asyncio.Event()
         self._signal_handlers_setup = False
 
-        # Optimized timeout handling
-        self._wait_timeout = self.conf.service_wait_timeout
         self._shutdown_timeout = self.conf.graceful_shutdown_timeout
 
         # Enhanced monitoring and health check
@@ -207,6 +207,18 @@ class ServiceLauncher(Launcher):
         """Stop all services and clean up resources asynchronously."""
         LOG.info('Stopping ServiceLauncher')
 
+        # Cancel shutdown timeout task first to prevent unnecessary waiting
+        if (
+            self._shutdown_timeout_task
+            and not self._shutdown_timeout_task.done()
+        ):
+            LOG.debug('Cancelling shutdown timeout task')
+            self._shutdown_timeout_task.cancel()
+            try:
+                await self._shutdown_timeout_task
+            except asyncio.CancelledError:
+                LOG.debug('Shutdown timeout task cancelled successfully')
+
         # Cleanup background tasks first
         await self._cleanup_background_tasks()
 
@@ -279,22 +291,50 @@ class ServiceLauncher(Launcher):
             self._metrics['error_count'] += 1
 
     async def _handle_timeout_exit(self):
-        """Async timeout handler"""
+        """Async timeout handler with improved cleanup - acts as a safety net"""
         try:
             await asyncio.sleep(self._shutdown_timeout)
             LOG.warning(
                 f'Graceful shutdown timeout '
                 f'({self._shutdown_timeout}s) exceeded'
             )
-            LOG.info('Graceful shutdown timeout exceeded, immediate exit')
+            LOG.info(
+                'Graceful shutdown timeout exceeded, forcing cleanup and exit'
+            )
+
+            try:
+                await asyncio.wait_for(
+                    self._cleanup_background_tasks(), timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                LOG.warning('Background task cleanup timed out')
+            except Exception as e:
+                LOG.error(f'Error during forced cleanup: {e}')
+
+            # Force exit after timeout
+            LOG.critical('Forcing immediate exit due to shutdown timeout')
             os._exit(1)
         except asyncio.CancelledError:
-            LOG.debug('Shutdown timeout cancelled')
+            LOG.debug('Shutdown timeout cancelled - normal shutdown completed')
+            # This is expected when normal shutdown completes successfully
 
     def _handle_exit(self, signum, frame):
-        """Handle fast exit signal."""
-        LOG.info('Received SIGINT, immediate exit')
-        os._exit(1)
+        """Handle fast exit signal with minimal cleanup."""
+        LOG.info('Received SIGINT, performing fast exit')
+
+        if not self._shutdown_event.is_set():
+            self._shutdown_event.set()
+
+        def force_exit():
+            time.sleep(1)
+            LOG.warning('Fast exit timeout, forcing immediate termination')
+            os._exit(1)
+
+        timer = threading.Timer(1.0, force_exit)
+        timer.daemon = True
+        timer.start()
+
+        sys.exit(1)
 
     def _handle_reload(self, signum, frame):
         """Handle service reload signal."""
@@ -350,7 +390,8 @@ class ServiceLauncher(Launcher):
     async def _perform_health_check(self):
         """Enhanced health check implementation."""
         try:
-            LOG.trace('Performing service health check')
+            if self.conf.show_debug_log:
+                LOG.debug('Performing service health check')
             # Check if services are still running and responsive
             service_count = len(self.services.services)
 
@@ -416,7 +457,7 @@ class ServiceLauncher(Launcher):
         return status, signo
 
     async def _wait_for_events(self) -> tuple[int, int]:
-        """Wait for service events with timeout handling."""
+        """Wait for service events"""
         # Create tasks for different events
         tasks = {
             'service_wait': asyncio.create_task(super().wait()),
@@ -424,34 +465,11 @@ class ServiceLauncher(Launcher):
             'restart': asyncio.create_task(self._restart_event.wait()),
         }
 
-        try:
-            done, pending = await self._wait_with_timeout(tasks)
-            return await self._process_completed_events(tasks, done, pending)
-        except TimeoutError:
-            LOG.warning('Operation timed out')
-            return ExitCodes.TIMEOUT, None
-
-    async def _wait_with_timeout(self, tasks: dict) -> tuple[set, set]:
-        """Wait for tasks with optional timeout."""
-        if self._wait_timeout:
-            done, pending = await asyncio.wait(
-                tasks.values(),
-                return_when=asyncio.FIRST_COMPLETED,
-                timeout=self._wait_timeout,
-            )
-            if not done:
-                LOG.warning(
-                    f'Wait timeout ({self._wait_timeout}s) exceeded, '
-                    'forcing shutdown'
-                )
-                await self.stop()
-                raise TimeoutError()
-        else:
-            done, pending = await asyncio.wait(
-                tasks.values(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        return done, pending
+        done, pending = await asyncio.wait(
+            tasks.values(),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        return await self._process_completed_events(tasks, done, pending)
 
     async def _process_completed_events(
         self, tasks: dict, done: set, pending: set
@@ -468,6 +486,16 @@ class ServiceLauncher(Launcher):
 
         if completed_task == tasks['shutdown']:
             LOG.info('Graceful shutdown requested')
+            # Cancel timeout task immediately when starting graceful shutdown
+            if (
+                self._shutdown_timeout_task
+                and not self._shutdown_timeout_task.done()
+            ):
+                self._shutdown_timeout_task.cancel()
+                try:
+                    await self._shutdown_timeout_task
+                except asyncio.CancelledError:
+                    pass
             await self.stop()
             return ExitCodes.SUCCESS, None
         elif completed_task == tasks['restart']:

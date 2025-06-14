@@ -251,7 +251,7 @@ class LoopingCallBase:
 
                 idle = idle_for_func(result, self._elapsed(watch))
                 LOG.debug(
-                    f'{kind} {func_name} sleeping for {idle:.03f} seconds',
+                    f'{kind} {func_name} sleeping for {idle:.03f} seconds'
                 )
                 await self._sleep(idle)
 

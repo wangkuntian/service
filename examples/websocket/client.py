@@ -4,27 +4,20 @@ import time
 
 import websockets
 
+from service import launchers
 from service.config.common import ConfigOpts
 from service.daemon import DaemonService, Manager
-from service.launchers.launch import launch
 from service.periodic_task import periodic_task
 from service.utils.log import LOG
-
-
-class MyService(DaemonService):
-    def __init__(self, conf: ConfigOpts, manager: Manager, *args, **kwargs):
-        super().__init__(conf, manager, *args, **kwargs)
-
-    async def start(self):
-        await self.manager.start()
-        await super().start()
 
 
 class ServiceManager(Manager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ws_client = None
-        self.url = 'ws://192.168.1.11:8765'
+        self.host = '192.168.33.42'
+        self.port = 8765
+        self.url = f'ws://{self.host}:{self.port}'
         self.is_connected = False
         self.reconnect_delay = 5  # reconnect delay in seconds
         # connection lock, prevent simultaneous connection
@@ -130,29 +123,30 @@ class ServiceManager(Manager):
     async def listen_messages(self):
         """listen WebSocket messages"""
         while True:
-            if self.is_connected and self.ws_client:
-                try:
-                    message = await self.ws_client.recv()
-                    LOG.info(f'Received message: {message}')
-                    # handle received message
-                    await self.handle_message(message)
-                except websockets.exceptions.ConnectionClosed:
-                    LOG.warning('WebSocket connection closed')
-                    self.is_connected = False
-                    # reset retry count, because it was connected before
-                    self._current_retries = 0
-                except Exception as e:
-                    LOG.error(f'Error receiving message: {e}')
-                    self.is_connected = False
-            else:
-                # if not connected, try to reconnect (with limit)
-                if (
-                    not self._connecting_lock.locked()
-                    and self._current_retries < self._max_retries
-                ):
-                    asyncio.create_task(self.connect_ws())
-                # wait for a while and then retry
-                await asyncio.sleep(self.reconnect_delay)
+            async with self._connecting_lock:
+                if self.is_connected and self.ws_client:
+                    try:
+                        message = await self.ws_client.recv()
+                        LOG.info(f'Received message: {message}')
+                        # handle received message
+                        await self.handle_message(message)
+                    except websockets.exceptions.ConnectionClosed:
+                        LOG.warning('WebSocket connection closed')
+                        self.is_connected = False
+                        # reset retry count, because it was connected before
+                        self._current_retries = 0
+                    except Exception as e:
+                        LOG.error(f'Error receiving message: {e}')
+                        self.is_connected = False
+                else:
+                    # if not connected, try to reconnect (with limit)
+                    if (
+                        not self._connecting_lock.locked()
+                        and self._current_retries < self._max_retries
+                    ):
+                        asyncio.create_task(self.connect_ws())
+                    # wait for a while and then retry
+                    await asyncio.sleep(self.reconnect_delay)
 
     async def handle_message(self, message):
         """handle received message"""
@@ -172,8 +166,8 @@ class ServiceManager(Manager):
 async def main():
     conf = ConfigOpts()
     manager = ServiceManager()
-    service = MyService(conf=conf, manager=manager)
-    launcher = await launch(conf=conf, service=service, workers=1)
+    service = DaemonService(conf, manager)
+    launcher = await launchers.launch(conf=conf, service=service, workers=1)
     await launcher.wait()
 
 
