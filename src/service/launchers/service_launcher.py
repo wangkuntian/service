@@ -390,8 +390,6 @@ class ServiceLauncher(Launcher):
     async def _perform_health_check(self):
         """Enhanced health check implementation."""
         try:
-            if self.conf.show_debug_log:
-                LOG.debug('Performing service health check')
             # Check if services are still running and responsive
             service_count = len(self.services.services)
 

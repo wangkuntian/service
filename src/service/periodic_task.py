@@ -138,7 +138,16 @@ class PeriodicTasks(metaclass=_PeriodicTasksMeta):
             cls_name = reflection.get_class_name(self, fully_qualified=False)
             full_task_name = '.'.join([cls_name, task_name])
 
-            spacing = self._periodic_spacing[task_name]
+            if task._periodic_dynamic:
+                dynamic_spacing_attr = f'_{task_name}_spacing'
+                if hasattr(self, dynamic_spacing_attr):
+                    spacing = getattr(self, dynamic_spacing_attr)
+                    self._periodic_spacing[task_name] = spacing
+                else:
+                    spacing = self._periodic_spacing[task_name]
+            else:
+                spacing = self._periodic_spacing[task_name]
+
             last_run = self._periodic_last_run[task_name]
 
             # Check if due, if not skip
@@ -206,7 +215,10 @@ class PeriodicTasks(metaclass=_PeriodicTasksMeta):
 
 
 def periodic_task(
-    spacing: float = 0, enabled: bool = True, external_ok: bool = True
+    spacing: float = 0,
+    enabled: bool = True,
+    external_ok: bool = True,
+    dynamic: bool = False,
 ):
     """Decorator for marking periodic tasks.
 
@@ -214,6 +226,7 @@ def periodic_task(
         spacing: task execution interval (seconds)
         enabled: whether to enable the task
         external_ok: whether to allow running in external processes
+        dynamic: whether to allow dynamic spacing
     """
 
     def decorator(func):
@@ -223,6 +236,7 @@ def periodic_task(
         func._periodic_enabled = enabled
         func._periodic_external_ok = external_ok
         func._periodic_last_run = None
+        func._periodic_dynamic = dynamic
         return func
 
     return decorator

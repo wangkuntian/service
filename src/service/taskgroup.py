@@ -163,21 +163,7 @@ class TaskGroup:
             async with self.semaphore:
                 try:
                     self._stats['tasks_created'] += 1
-                    if timeout:
-
-                        def actual_callback():
-                            return asyncio.wait_for(
-                                callback(*args, **kwargs)
-                                if asyncio.iscoroutinefunction(callback)
-                                else callback(*args, **kwargs),
-                                timeout=timeout,
-                            )
-                    else:
-                        actual_callback = callback
-
-                    if asyncio.iscoroutinefunction(
-                        actual_callback if not timeout else callback
-                    ):
+                    if asyncio.iscoroutinefunction(callback):
                         if timeout:
                             result = await asyncio.wait_for(
                                 callback(*args, **kwargs), timeout=timeout
